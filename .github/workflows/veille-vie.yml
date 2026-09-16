@@ -1,0 +1,53 @@
+name: Veille VIE
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # toutes les heures (a la minute 17)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Mode de lancement"
+        type: choice
+        default: normal
+        options: [normal, test]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: veille-vie
+  cancel-in-progress: false
+
+jobs:
+  veille:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Chercher les nouvelles offres
+        env:
+          GMAIL_ADRESSE: ${{ secrets.GMAIL_ADRESSE }}
+          GMAIL_MOT_DE_PASSE_APPLI: ${{ secrets.GMAIL_MOT_DE_PASSE_APPLI }}
+          DESTINATAIRE: ${{ secrets.DESTINATAIRE }}
+          VIE_API_KEY: ${{ secrets.VIE_API_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "test" ]; then
+            python veille_vie.py --test
+          else
+            python veille_vie.py
+          fi
+
+      - name: Sauvegarder les offres deja vues
+        run: |
+          git config user.name "veille-vie-bot"
+          git config user.email "veille-vie-bot@users.noreply.github.com"
+          git add offres_vues.json 2>/dev/null || exit 0
+          git diff --cached --quiet && exit 0
+          git commit -m "Mise a jour des offres vues"
+          git pull --rebase --quiet || true
+          git push
