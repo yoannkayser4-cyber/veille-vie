@@ -1,4 +1,4 @@
-"""
+ """
 Veille V.I.E. - envoie un e-mail a chaque nouvelle offre publiee sur
 mon-vie-via.businessfrance.fr (Business France / Civiweb).
 
