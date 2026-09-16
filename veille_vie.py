@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Veille V.I.E. - envoie un e-mail a chaque nouvelle offre publiee sur
 mon-vie-via.businessfrance.fr (Business France / Civiweb).
@@ -68,9 +67,9 @@ TIMEOUT = 30
 FICHIER_ETAT = Path(os.environ.get("VIE_ETAT", "offres_vues.json"))
 MAX_IDS_MEMORISES = 6000
 
-GMAIL_ADRESSE = os.environ.get("GMAIL_ADRESSE", "")
-GMAIL_MOT_DE_PASSE = os.environ.get("GMAIL_MOT_DE_PASSE_APPLI", "").replace(" ", "")
-DESTINATAIRE = os.environ.get("DESTINATAIRE") or GMAIL_ADRESSE
+GMAIL_ADRESSE = os.environ.get("GMAIL_ADRESSE", "").strip()
+GMAIL_MOT_DE_PASSE = "".join(os.environ.get("GMAIL_MOT_DE_PASSE_APPLI", "").split())
+DESTINATAIRE = (os.environ.get("DESTINATAIRE") or "").strip() or GMAIL_ADRESSE
 SMTP_HOTE = os.environ.get("SMTP_HOTE", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 
@@ -289,9 +288,18 @@ def construire_mail(offres, test=False):
 def envoyer(msg):
     if not (GMAIL_ADRESSE and GMAIL_MOT_DE_PASSE):
         raise SystemExit("ERREUR : secrets GMAIL_ADRESSE / GMAIL_MOT_DE_PASSE_APPLI manquants.")
-    with smtplib.SMTP_SSL(SMTP_HOTE, SMTP_PORT, timeout=TIMEOUT) as s:
-        s.login(GMAIL_ADRESSE, GMAIL_MOT_DE_PASSE)
-        s.send_message(msg)
+    print(f"Connexion Gmail avec l'adresse {GMAIL_ADRESSE!r} "
+          f"(mot de passe : {len(GMAIL_MOT_DE_PASSE)} caracteres, 16 attendus)")
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOTE, SMTP_PORT, timeout=TIMEOUT) as s:
+            s.login(GMAIL_ADRESSE, GMAIL_MOT_DE_PASSE)
+            s.send_message(msg)
+    except smtplib.SMTPAuthenticationError:
+        raise SystemExit(
+            "ERREUR Gmail : adresse ou mot de passe d'application refuse.\n"
+            "Verifie le secret GMAIL_ADRESSE (adresse complete) et recree un mot de "
+            "passe d'application sur https://myaccount.google.com/apppasswords "
+            "(validation en deux etapes obligatoire).")
 
 # ---------------------------------------------------------------------------
 # PROGRAMME
