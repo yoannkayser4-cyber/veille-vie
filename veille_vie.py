@@ -17,8 +17,9 @@ Modes :
   python veille_vie.py --test     -> envoie les 5 offres les plus recentes
                                      (pour verifier que l'e-mail arrive),
                                      sans toucher au fichier d'etat
-  python veille_vie.py --apercu   -> affiche les offres dans la console,
-                                     sans e-mail ni sauvegarde
+  python veille_vie.py --apercu   -> affiche les pays presents, l'effet des
+                                     filtres et les dernieres offres, sans
+                                     e-mail ni sauvegarde
 
 Aucune dependance externe : uniquement la bibliotheque standard Python.
 """
@@ -28,6 +29,7 @@ import json
 import os
 import smtplib
 import sys
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -39,11 +41,31 @@ from pathlib import Path
 # REGLAGES (modifiables)
 # ---------------------------------------------------------------------------
 
-# Filtres optionnels. Listes vides = aucune restriction (toutes les offres).
-# Comparaison insensible a la casse, sur le texte indique.
+# True = les offres situees en Europe sont ignorees (voir liste EUROPE plus bas).
+# False = toutes les offres, Europe comprise.
+EXCLURE_EUROPE = True
+
+# Filtres optionnels. Listes vides = aucune restriction.
+# Majuscules, accents et tirets sont ignores ("Etats-Unis" = "ÉTATS UNIS").
 MOTS_CLES = []          # ex. ["commercial", "business", "sales", "export"] (titre)
-PAYS_EXCLUS = []        # ex. ["Allemagne", "Belgique", "Espagne"]
-PAYS_INCLUS = []        # ex. ["Canada", "Singapour", "Australie"] (si rempli, seuls ces pays)
+PAYS_EXCLUS = []        # pays a ignorer en plus, ex. ["Turquie", "Maroc"]
+PAYS_INCLUS = []        # si rempli, SEULS ces pays, ex. ["Canada", "Singapour"]
+
+# Pays consideres comme "Europe" (noms francais, tels qu'affiches sur le site).
+# La Turquie, la Georgie, l'Armenie et l'Azerbaidjan ne sont PAS dans la liste :
+# ajoute-les a PAYS_EXCLUS si tu veux aussi les ignorer.
+EUROPE = [
+    "France", "Allemagne", "Autriche", "Belgique", "Bulgarie", "Chypre", "Croatie",
+    "Danemark", "Espagne", "Estonie", "Finlande", "Grece", "Hongrie", "Irlande",
+    "Italie", "Lettonie", "Lituanie", "Luxembourg", "Malte", "Pays-Bas", "Pologne",
+    "Portugal", "Republique tcheque", "Tchequie", "Roumanie", "Slovaquie",
+    "Slovenie", "Suede", "Royaume-Uni", "Grande-Bretagne", "Angleterre", "Ecosse",
+    "Irlande du Nord", "Suisse", "Norvege", "Islande", "Liechtenstein", "Monaco",
+    "Andorre", "Saint-Marin", "Vatican", "Gibraltar", "Albanie",
+    "Bosnie-Herzegovine", "Kosovo", "Macedoine du Nord", "Macedoine",
+    "Montenegro", "Serbie", "Moldavie", "Ukraine", "Bielorussie", "Russie",
+    "Federation de Russie",
+]
 
 # Nombre maximum d'offres detaillees dans un e-mail (le reste est resume).
 MAX_OFFRES_PAR_MAIL = 60
@@ -180,13 +202,30 @@ def cle_id(oid):
         return 0
 
 
+def simplifier(texte):
+    """'États-Unis' -> 'ETATS UNIS' (sans accents, majuscules, sans tirets)."""
+    t = unicodedata.normalize("NFKD", str(texte))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    t = t.upper().replace("-", " ").replace("'", " ")
+    return " ".join(t.split())
+
+
+_EUROPE = {simplifier(p) for p in EUROPE}
+
+
+def est_en_europe(o):
+    return simplifier(o["pays"]) in _EUROPE
+
+
 def passe_filtres(o):
-    titre, pays = o["titre"].lower(), o["pays"].lower()
-    if MOTS_CLES and not any(m.lower() in titre for m in MOTS_CLES):
+    titre, pays = simplifier(o["titre"]), simplifier(o["pays"])
+    if EXCLURE_EUROPE and est_en_europe(o):
         return False
-    if PAYS_INCLUS and not any(p.lower() == pays for p in PAYS_INCLUS):
+    if MOTS_CLES and not any(simplifier(m) in titre for m in MOTS_CLES):
         return False
-    if any(p.lower() == pays for p in PAYS_EXCLUS):
+    if PAYS_INCLUS and pays not in {simplifier(p) for p in PAYS_INCLUS}:
+        return False
+    if pays in {simplifier(p) for p in PAYS_EXCLUS}:
         return False
     return True
 
@@ -324,7 +363,16 @@ def main(args):
         print("Aucune offre recue : on ne touche pas a l'etat (probable souci API).")
         return 1
 
-    if "--apercu" in args:
+    if "--apercu" in args or "--pays" in args:
+        compte = {}
+        for o in offres:
+            compte[o["pays"]] = compte.get(o["pays"], 0) + 1
+        print("\nPays presents (E = considere comme Europe, donc ignore si EXCLURE_EUROPE) :")
+        for pays, nb in sorted(compte.items(), key=lambda x: -x[1]):
+            marque = "E" if simplifier(pays) in _EUROPE else " "
+            print(f"  [{marque}] {pays or '(vide)'} : {nb}")
+        garde = sum(1 for o in offres if passe_filtres(o))
+        print(f"\nAvec les filtres actuels : {garde} offres sur {len(offres)} seraient envoyees.\n")
         for o in offres[:20]:
             print(f"  #{o['id']} {o['titre']} | {o['entreprise']} | {o['pays']} | publiee {o['publiee']}")
         return 0
@@ -344,6 +392,9 @@ def main(args):
     nouvelles = [o for o in offres if o["id"] not in vues]
     a_envoyer = [o for o in nouvelles if passe_filtres(o)]
     print(f"{len(nouvelles)} nouvelle(s) offre(s), {len(a_envoyer)} apres filtres.")
+    for o in nouvelles:
+        if o not in a_envoyer:
+            print(f"  ignoree (filtre) : {o['titre']} - {o['pays']}")
 
     if a_envoyer:
         envoyer(construire_mail(a_envoyer))   # si l'envoi echoue, l'etat n'est pas mis a jour
